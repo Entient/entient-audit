@@ -1,0 +1,118 @@
+# policy_spec.toml
+# Defines what is substantive vs noise for canonical form generation.
+# RULE: Bump policy_version if ANY rule changes. Old CFs are invalid under new versions.
+# RULE: Never edit in place — always create a new version.
+
+policy_version = "1.0.0"
+policy_description = "General-purpose auditor-grade canonicalization policy"
+
+[hash]
+implemented = true  # enforced in canonicalizer.py → frozen_hash()
+algorithm = "SHA-256"
+# Pin the algorithm per version. Changing this REQUIRES a version bump.
+# Acceptable: SHA-256, SHA-384, SHA-512, SHA3-256
+output_encoding = "hex"  # hex | base64
+
+[encoding]
+implemented = true  # enforced in canonicalizer.py → _normalize_string() unicode normalization
+charset = "UTF-8"
+unicode_normalization = "NFC"
+strip_bom = true
+
+[string_normalization]
+implemented = true  # enforced in canonicalizer.py → _normalize_string()
+trim_whitespace = true
+collapse_internal_whitespace = true
+lowercase_strings = false  # case sensitivity is policy-bound; default = preserve case
+
+[json_normalization]
+implemented = true  # enforced in canonicalizer.py → canonicalize()
+sort_keys = true
+remove_null_fields = true
+# NOTE: treat_missing_and_null_equal is enforced via remove_null_fields=true.
+# When null fields are removed, {"a":1,"b":null} canonicalizes identically to {"a":1}.
+# This is the correct semantic: null == missing under this policy.
+remove_empty_strings = false       # "" is semantically distinct from missing in most domains
+numeric_normalization = true       # 1 == 1.0 == 1.000
+numeric_format = "shortest"        # "shortest" strips trailing zeros; "fixed:N" for N decimal places
+# IMPORTANT: Decimal('1E+2') vs '100' — we normalize to non-scientific shortest form
+
+[timestamp_normalization]
+implemented = true  # enforced in canonicalizer.py → _normalize_timestamp_value(), _bucket_timestamp()
+mode = "bucket"                    # "exact" | "bucket" | "strip"
+bucket_granularity = "day"         # second | minute | hour | day
+timezone_normalization = "UTC"     # Currently only UTC is supported. All timestamps are
+                                   # normalized to UTC before bucketing.
+ignore_if_marked_non_substantive = true
+# Fields recognized as timestamps (will be parsed and bucketed/stripped per mode)
+timestamp_fields = [
+    "timestamp", "created_at", "updated_at", "modified_at",
+    "date", "datetime", "time", "ts"
+]
+# Fields that are always stripped regardless of mode (transport/logging artifacts)
+non_substantive_fields = ["timestamp"]
+
+[synonyms]
+# Semantic equivalences declared by policy. Applied AFTER string normalization.
+# Format: variant = canonical_value
+# Only applied when enabled = true.
+implemented = true  # enforced in canonicalizer.py → _apply_synonyms()
+enabled = true
+
+[synonyms.mappings]
+"USA" = "United States"
+"U.S." = "United States"
+"U.S.A." = "United States"
+"US" = "United States"
+"UK" = "United Kingdom"
+"U.K." = "United Kingdom"
+
+[list_normalization]
+implemented = true  # enforced in canonicalizer.py → canonicalize() set_fields handling
+# If a field is tagged as a "set" (order-irrelevant), sort elements before hashing.
+sort_sets = true
+# Deduplication: if policy says duplicates are noise, deduplicate sorted sets.
+deduplicate_sets = false
+
+[binary_normalization]
+implemented = false  # NOT enforced by canonicalizer.py.
+# These rules apply to binary/media preprocessing BEFORE objects enter
+# the canonicalization pipeline. Your ingestion layer must handle these.
+# Included here so policy is the single source of truth for auditors.
+strip_exif = true
+normalize_line_endings = "LF"      # LF | CRLF | preserve
+strip_trailing_newline = true
+
+[nonces]
+implemented = true  # enforced in canonicalizer.py → canonicalize() nonce field exclusion
+# Nonces, request IDs, trace IDs — transport artifacts excluded from CF.
+exclude_from_canonical_form = true
+# Field names to auto-exclude (case-insensitive match after normalization):
+excluded_fields = [
+    "nonce", "request_id", "trace_id", "x-request-id",
+    "correlation_id", "idempotency_key", "session_id"
+]
+
+[signing]
+implemented = true  # enforced in receipts.py → ReceiptSigner (DSSE PAE signing)
+enabled = true
+algorithm = "ECDSA-P256"           # ECDSA-P256 (third-party verifiable) | HMAC-SHA256 (shared-secret)
+# ECDSA-P256: public export enables independent verification without secrets
+# HMAC-SHA256: verifier needs shared secret via secure channel (KMS/Vault)
+key_rotation_policy = "90d"        # rotate signing keys every 90 days
+receipt_format = "DSSE"            # Dead Simple Signing Envelope (spec-correct PAE)
+include_timestamp = true           # attach signed timestamp to receipt
+include_policy_version = true      # bind policy version into receipt
+# NOTE: Verifier enforces sign-time validity by default:
+# receipts signed after key expiry are rejected even if key was once valid.
+# Revoked keys are always rejected unconditionally.
+
+[audit]
+implemented = true  # enforced in prove.py → evidence output
+# What gets written to the evidence log
+log_canonical_form = true
+log_frozen_hash = true
+log_receipt = true
+log_input_hash = true              # hash of raw input (before canonicalization) for traceability
+evidence_directory = "evidence/"
+summary_file = "evidence/summary.txt"

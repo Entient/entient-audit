@@ -1,0 +1,31 @@
+{"id":"V1a","description":"Whitespace: leading/trailing/internal","a":"What is the capital of France?","b":"  What   is the capital   of France?  ","expect_same":true}
+{"id":"V1b","description":"Whitespace: tabs and newlines","a":"hello world","b":"hello\t\n  world","expect_same":true}
+{"id":"V2a","description":"JSON key order: simple","a":{"b":1,"a":2},"b":{"a":2,"b":1},"expect_same":true}
+{"id":"V2b","description":"JSON key order: nested","a":{"z":{"b":1,"a":2},"y":3},"b":{"y":3,"z":{"a":2,"b":1}},"expect_same":true}
+{"id":"V3a","description":"Numeric: int vs float","a":{"value":1},"b":{"value":1.0},"expect_same":true}
+{"id":"V3b","description":"Numeric: trailing zeros","a":{"value":1.0},"b":{"value":1.000},"expect_same":true}
+{"id":"V3c","description":"Numeric: negative zero","a":{"value":0},"b":{"value":-0.0},"expect_same":true}
+{"id":"V4a","description":"Null vs missing: top-level","a":{"a":1,"b":null},"b":{"a":1},"expect_same":true}
+{"id":"V4b","description":"Null vs missing: nested","a":{"x":{"a":1,"b":null}},"b":{"x":{"a":1}},"expect_same":true}
+{"id":"V5a","description":"Synonym: USA variants","a":"Made in USA","b":"Made in United States","expect_same":true}
+{"id":"V5b","description":"Synonym: U.S. variant","a":"Shipped from U.S.","b":"Shipped from United States","expect_same":true}
+{"id":"V5c","description":"Synonym: UK variant","a":"UK office","b":"United Kingdom office","expect_same":true}
+{"id":"V6a","description":"Substantive difference: different content","a":"Capital of France","b":"Capital of Germany","expect_same":false}
+{"id":"V6b","description":"Substantive difference: different values","a":{"amount":100},"b":{"amount":200},"expect_same":false}
+{"id":"V6c","description":"Substantive difference: extra field","a":{"a":1},"b":{"a":1,"c":3},"expect_same":false}
+{"id":"V7a","description":"List as set: order irrelevant","a":{"tags":["red","blue","green"]},"b":{"tags":["green","red","blue"]},"expect_same":true,"set_fields":["tags"]}
+{"id":"V7b","description":"List as sequence: order matters","a":{"steps":["first","second"]},"b":{"steps":["second","first"]},"expect_same":false}
+{"id":"V8a","description":"Nonce exclusion: request_id stripped","a":{"action":"buy","amount":100,"request_id":"abc-123"},"b":{"action":"buy","amount":100,"request_id":"def-456"},"expect_same":true}
+{"id":"V8b","description":"Nonce exclusion: trace_id stripped","a":{"data":"test","trace_id":"tr-001"},"b":{"data":"test","trace_id":"tr-999"},"expect_same":true}
+{"id":"V9a","description":"Unicode NFC normalization","a":"caf\u00e9","b":"cafe\u0301","expect_same":true}
+{"id":"V10a","description":"Policy version binding: same version","a":{"msg":"hello"},"b":{"msg":"hello"},"expect_same":true,"policy_version":"1.0.0"}
+{"id":"V11a","description":"Model call envelope: same prompt different transport","a":{"model":"gpt-4","messages":[{"role":"user","content":"hello"}],"request_id":"r1","timestamp":"2025-01-01T00:00:00Z"},"b":{"model":"gpt-4","messages":[{"role":"user","content":"hello"}],"request_id":"r2","timestamp":"2025-01-01T12:00:00Z"},"expect_same":true}
+{"id":"V11b","description":"Model call envelope: different prompt","a":{"model":"gpt-4","messages":[{"role":"user","content":"hello"}]},"b":{"model":"gpt-4","messages":[{"role":"user","content":"goodbye"}]},"expect_same":false}
+{"id":"V12a","description":"Empty string vs missing: empty string preserved","a":{"name":""},"b":{"name":"test"},"expect_same":false}
+{"id":"V13a","description":"Synonym boundary: US inside word preserved","a":"Visit the museum today","b":"Visit the museum today","expect_same":true}
+{"id":"V13b","description":"Synonym boundary: US standalone replaced","a":"Made in US","b":"Made in United States","expect_same":true}
+{"id":"V13c","description":"Synonym boundary: RUST not affected by US","a":"Learn RUST programming","b":"Learn RUST programming","expect_same":true}
+{"id":"V14a","description":"Timestamp bucketing: same day different times","a":{"action":"buy","created_at":"2025-06-15T08:30:00Z"},"b":{"action":"buy","created_at":"2025-06-15T22:45:00Z"},"expect_same":true}
+{"id":"V14b","description":"Timestamp bucketing: different days","a":{"action":"buy","created_at":"2025-06-15T23:59:59Z"},"b":{"action":"buy","created_at":"2025-06-16T00:00:01Z"},"expect_same":false}
+{"id":"V14c","description":"Timestamp bucketing: timezone normalization","a":{"action":"buy","created_at":"2025-06-15T20:00:00-04:00"},"b":{"action":"buy","created_at":"2025-06-16T00:00:00Z"},"expect_same":true}
+{"id":"V14d","description":"Timestamp non-substantive: stripped field","a":{"data":"test","timestamp":"2025-01-01T00:00:00Z"},"b":{"data":"test","timestamp":"2099-12-31T23:59:59Z"},"expect_same":true}
