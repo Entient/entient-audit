@@ -1,0 +1,145 @@
+{
+  "_comment": "Cross-repo golden fixture pack for ReceiptEnvelopeV1. Generated deterministically from a fixed Ed25519 seed. DO NOT edit by hand.",
+  "generated": "2026-03-19T20:03:59.966Z",
+  "public_key_hex": "e3abf014d9427c06cec830166b3e529e20e7da9ec7aeb0168e883eae6795b1d5",
+  "signer_fingerprint": "6ed1d43b97fcbee79526430dd1754462",
+  "vectors": [
+    {
+      "action": "forge",
+      "domain": "forge",
+      "receipt_type": "witness",
+      "envelope": {
+        "envelope_version": "1",
+        "receipt_type": "witness",
+        "receipt_id": "sha256:7b282230d8b425c3ba788108aee267b498817acea965271a640a8d0047a6ebb5",
+        "timestamp_utc": "2026-03-18T12:00:00.000Z",
+        "object_id": "a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8",
+        "payload_hash": "sha256:5113ded988e157a401691b54d88233139820bba4ccc3f4fd79f57b2d9896f0b8",
+        "canonical_payload": "{\"action\":\"forge\",\"envelope_hash\":\"sha256:abcdef0123456789\",\"forger\":\"user_alice\",\"object_id\":\"a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8\",\"timestamp\":\"2026-03-18T12:00:00.000Z\"}",
+        "signature": "edf2dfe768a4c96f7985294523b9dfa986a3bf4ad614bc812bdbb383c2f82efad01b1c1d1de6989f5ece85be60d719100d08c53010dd7f270af88eaa3d16c10d",
+        "signature_algorithm": "Ed25519",
+        "signing_domain": "ENTIENT:spatial:forge:v1",
+        "signer_public_key": "e3abf014d9427c06cec830166b3e529e20e7da9ec7aeb0168e883eae6795b1d5",
+        "signer_fingerprint": "6ed1d43b97fcbee79526430dd1754462",
+        "sequence_number": 1,
+        "prior_receipt": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        "extensions": {
+          "entient": {
+            "spatial_action": "forge"
+          }
+        }
+      }
+    },
+    {
+      "action": "constitute",
+      "domain": "constitute",
+      "receipt_type": "witness",
+      "envelope": {
+        "envelope_version": "1",
+        "receipt_type": "witness",
+        "receipt_id": "sha256:4dc56d2a62494f7f6fd6a324bba539691543f86791bda22fdb10699f4a36c11f",
+        "timestamp_utc": "2026-03-18T12:00:00.000Z",
+        "object_id": "a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8",
+        "payload_hash": "sha256:d82cacbed23a43be6992061a9f541004ca60583588eecbe2184bb1e5458d8b91",
+        "canonical_payload": "{\"action\":\"constitute\",\"constitution\":{\"max_transfers\":5,\"ver\":\"1.0\"},\"constitution_hash\":\"sha256:const_hash_placeholder\",\"object_id\":\"a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8\",\"owner\":\"user_alice\",\"timestamp\":\"2026-03-18T12:00:00.000Z\"}",
+        "signature": "c39a7e6136ec3575900d73b0a0a0682f593784aaeed466fe8e5baa320b0e5bde5f8cbbe0102f7d9468740f308dd3a96e580706dad6f33ca7a822ef19c4664504",
+        "signature_algorithm": "Ed25519",
+        "signing_domain": "ENTIENT:spatial:constitution:v1",
+        "signer_public_key": "e3abf014d9427c06cec830166b3e529e20e7da9ec7aeb0168e883eae6795b1d5",
+        "signer_fingerprint": "6ed1d43b97fcbee79526430dd1754462",
+        "sequence_number": 2,
+        "prior_receipt": "sha256:7b282230d8b425c3ba788108aee267b498817acea965271a640a8d0047a6ebb5",
+        "extensions": {
+          "entient": {
+            "spatial_action": "constitute",
+            "constitution_hash": "sha256:const_hash_placeholder"
+          }
+        }
+      }
+    },
+    {
+      "action": "transfer",
+      "domain": "transfer",
+      "receipt_type": "settlement",
+      "envelope": {
+        "envelope_version": "1",
+        "receipt_type": "settlement",
+        "receipt_id": "sha256:e459895b38631e65a260bab7921023f76e12b5945f3b0a7de2577e1861a5bb3b",
+        "timestamp_utc": "2026-03-18T12:00:00.000Z",
+        "object_id": "a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8",
+        "payload_hash": "sha256:5527b65aedfcc0e6faf7d5fa891b54851eb631003f199962974ac4a150b5d483",
+        "canonical_payload": "{\"action\":\"transfer\",\"attestation_id\":\"sha256:attest_id_placeholder\",\"attestation_payload_hash\":\"sha256:attest_hash_placeholder\",\"commerce_tx_id\":\"tx_12345\",\"constitution_hash\":\"sha256:const_hash_placeholder\",\"creator\":\"user_alice\",\"from_owner\":\"user_alice\",\"is_resale\":false,\"object_id\":\"a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8\",\"prior_receipt\":\"sha256:4dc56d2a62494f7f6fd6a324bba539691543f86791bda22fdb10699f4a36c11f\",\"royalty_bps\":1000,\"royalty_cents\":0,\"sale_amount_cents\":5000,\"sale_currency\":\"USD\",\"seller_net_cents\":5000,\"signer_public_key\":\"e3abf014d9427c06cec830166b3e529e20e7da9ec7aeb0168e883eae6795b1d5\",\"timestamp\":\"2026-03-18T12:00:00.000Z\",\"to_owner\":\"user_bob\",\"world_context\":null}",
+        "signature": "5d7d6c35ca2fafd3f84361813666472f5ea5476527e5e0b4f38ec2d54ece8135a3ee09f92fe8af39f7e1b675db8497525da0762670b83ade28cc66fee79b3d0a",
+        "signature_algorithm": "Ed25519",
+        "signing_domain": "ENTIENT:spatial:transfer:v1",
+        "signer_public_key": "e3abf014d9427c06cec830166b3e529e20e7da9ec7aeb0168e883eae6795b1d5",
+        "signer_fingerprint": "6ed1d43b97fcbee79526430dd1754462",
+        "sequence_number": 3,
+        "prior_receipt": "sha256:4dc56d2a62494f7f6fd6a324bba539691543f86791bda22fdb10699f4a36c11f",
+        "extensions": {
+          "entient": {
+            "spatial_action": "transfer",
+            "constitution_hash": "sha256:const_hash_placeholder",
+            "royalty": {
+              "creator": "user_alice",
+              "is_resale": false,
+              "royalty_bps": 1000,
+              "royalty_amount": 0,
+              "seller_net": 50,
+              "ledger_id": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "action": "refusal",
+      "domain": "refusal",
+      "receipt_type": "refusal",
+      "envelope": {
+        "envelope_version": "1",
+        "receipt_type": "refusal",
+        "receipt_id": "sha256:cb18ce443d7724fdbd145415a76bfecc19163b4be5552d56445c834ea3abc19d",
+        "timestamp_utc": "2026-03-18T12:00:00.000Z",
+        "object_id": "a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8",
+        "payload_hash": "sha256:708343dbe61d8f5bc9d08c4223b9aadfd8cfdc23d77cecb8beef959e93a25f03",
+        "canonical_payload": "{\"action\":\"refusal\",\"attestation_id\":\"sha256:attest_id_placeholder\",\"constitution_hash\":\"sha256:const_hash_placeholder\",\"from_owner\":\"user_alice\",\"object_id\":\"a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8\",\"timestamp\":\"2026-03-18T12:00:00.000Z\",\"to_owner\":\"user_bob\",\"violation\":{\"actual\":50000,\"limit\":10000,\"message\":\"Sale price exceeds cap\",\"rule\":\"max_resale_price\",\"rule_path\":\"rules.max_resale_price_cents\",\"violation_code\":\"PRICE_CAP_EXCEEDED\"},\"world_context\":null}",
+        "signature": "39f721e3aee7b1ad7994fb8127a3ee6de5f06a1a465ba1c812bbc765466ed401b6a44ce63e83faf352674ce7a1d126f4a4b8f711636d0f5cc2ada413bb91d407",
+        "signature_algorithm": "Ed25519",
+        "signing_domain": "ENTIENT:spatial:refusal:v1",
+        "signer_public_key": "e3abf014d9427c06cec830166b3e529e20e7da9ec7aeb0168e883eae6795b1d5",
+        "signer_fingerprint": "6ed1d43b97fcbee79526430dd1754462",
+        "extensions": {
+          "entient": {
+            "spatial_action": "refusal",
+            "constitution_hash": "sha256:const_hash_placeholder"
+          }
+        }
+      }
+    },
+    {
+      "action": "payment_attestation",
+      "domain": "attestation",
+      "receipt_type": "attestation",
+      "envelope": {
+        "envelope_version": "1",
+        "receipt_type": "attestation",
+        "receipt_id": "sha256:a9c95b416df40576dbfce85832d1a118cc4a7a1cb00d3147eb566fd1170c630a",
+        "timestamp_utc": "2026-03-18T12:00:00.000Z",
+        "object_id": "a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8",
+        "payload_hash": "sha256:3cfb86168eb3c9f0fc7e90b9803ede059f9c0195e3f740b2295f077aebcb742b",
+        "canonical_payload": "{\"action\":\"payment_attestation\",\"amount_cents\":5000,\"commerce_tx_id\":\"tx_12345\",\"currency\":\"USD\",\"object_id\":\"a1b2c3d4e5f6a7b8a1b2c3d4e5f6a7b8\",\"payee\":\"user_alice\",\"payer\":\"user_bob\",\"timestamp\":\"2026-03-18T12:00:00.000Z\"}",
+        "signature": "fba981d2268926e037fe7f8a48e693fcde1506d77656728fe20013d4d5880ac714166f554320aaa774f11aa41961c6acb395eea9b036145b6eacf00d4e288b0c",
+        "signature_algorithm": "Ed25519",
+        "signing_domain": "ENTIENT:spatial:attestation:v1",
+        "signer_public_key": "e3abf014d9427c06cec830166b3e529e20e7da9ec7aeb0168e883eae6795b1d5",
+        "signer_fingerprint": "6ed1d43b97fcbee79526430dd1754462",
+        "extensions": {
+          "entient": {
+            "spatial_action": "payment_attestation"
+          }
+        }
+      }
+    }
+  ]
+}

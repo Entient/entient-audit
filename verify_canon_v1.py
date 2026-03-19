@@ -5,12 +5,18 @@ verify_canon_v1.py -- Standalone ENTIENT receipt verifier.
 Verifies an ENTIENT receipt independently, without trusting the server.
 Uses only the receipt JSON and the published public key.
 
+Supports two receipt formats:
+  - Legacy compute receipts (canon_version 1, field exclusion)
+  - ReceiptEnvelopeV1 (envelope_version "1", canonical_payload + signing_domain)
+
 Requires: PyNaCl (pip install pynacl)
 
 Usage:
-    # Fetch a receipt and verify it
-    curl -s https://api.entient.com/v1/demo | python -m json.tool > receipt.json
+    # Verify a compute receipt
     python verify_canon_v1.py receipt.json
+
+    # Verify a spatial ReceiptEnvelopeV1
+    python verify_canon_v1.py envelope.json
 
     # Verify with an explicit public key
     python verify_canon_v1.py receipt.json --public-key <hex>
@@ -114,6 +120,98 @@ def verify_signer_key(receipt: dict, public_key_hex: str) -> bool:
     return receipt.get("signer", "") == public_key_hex
 
 
+# ================================================================
+# ReceiptEnvelopeV1 support
+# Spatial receipts carry canonical_payload and signing_domain directly.
+# Verification is: domain_prefix + canonical_payload => Ed25519 verify.
+# No field exclusion needed — the canonical form is pre-built.
+# ================================================================
+
+def is_envelope_v1(data: dict) -> bool:
+    """Detect ReceiptEnvelopeV1 format."""
+    return data.get("envelope_version") == "1"
+
+
+def verify_envelope_signature(envelope: dict, public_key_hex: str) -> bool:
+    """Verify Ed25519 signature over domain-prefixed canonical payload."""
+    try:
+        from nacl.signing import VerifyKey
+        from nacl.exceptions import BadSignatureError
+    except ImportError:
+        print("ERROR: PyNaCl required. Install with: pip install pynacl")
+        sys.exit(2)
+
+    canonical_payload = envelope.get("canonical_payload")
+    signature = envelope.get("signature")
+    signing_domain = envelope.get("signing_domain", "")
+
+    if not isinstance(canonical_payload, str) or len(canonical_payload) == 0:
+        return False
+    if not isinstance(signature, str) or len(signature) == 0:
+        return False
+
+    # Domain prefix: the signing_domain string + "\n" is prepended to the
+    # canonical payload before signing. The stored signing_domain may or
+    # may not include the trailing newline.
+    prefix = signing_domain
+    if prefix and not prefix.endswith("\n"):
+        prefix = prefix + "\n"
+
+    signed_bytes = (prefix + canonical_payload).encode("utf-8")
+    sig_bytes = bytes.fromhex(signature)
+    pub_bytes = bytes.fromhex(public_key_hex)
+
+    try:
+        vk = VerifyKey(pub_bytes)
+        vk.verify(signed_bytes, sig_bytes)
+        return True
+    except (BadSignatureError, Exception):
+        return False
+
+
+def verify_envelope_payload_hash(envelope: dict) -> bool:
+    """Verify payload_hash matches sha256(canonical_payload)."""
+    canonical_payload = envelope.get("canonical_payload", "")
+    payload_hash = envelope.get("payload_hash", "")
+
+    if not canonical_payload or not payload_hash:
+        return False
+
+    computed = "sha256:" + hashlib.sha256(
+        canonical_payload.encode("utf-8")
+    ).hexdigest()
+
+    return computed == payload_hash
+
+
+def verify_envelope_structure(envelope: dict) -> list:
+    """Validate required ReceiptEnvelopeV1 fields. Returns list of errors."""
+    errors = []
+    required_strings = [
+        "receipt_id", "timestamp_utc", "object_id", "payload_hash",
+        "canonical_payload", "signature", "signing_domain",
+        "signer_public_key", "signer_fingerprint",
+    ]
+    for field in required_strings:
+        val = envelope.get(field)
+        if not isinstance(val, str) or len(val) == 0:
+            errors.append(f"{field} missing or empty")
+
+    if envelope.get("signature_algorithm") != "Ed25519":
+        errors.append(f"signature_algorithm must be Ed25519")
+
+    valid_types = {"witness", "settlement", "refusal", "attestation"}
+    if envelope.get("receipt_type") not in valid_types:
+        errors.append(f"receipt_type must be one of {valid_types}")
+
+    ext = envelope.get("extensions", {})
+    entient = ext.get("entient", {}) if isinstance(ext, dict) else {}
+    if not isinstance(entient, dict) or "spatial_action" not in entient:
+        errors.append("extensions.entient.spatial_action missing")
+
+    return errors
+
+
 def fetch_public_key(base_url: str = "https://api.entient.com") -> str:
     """Fetch the active public key from the ENTIENT key registry."""
     url = f"{base_url}/.well-known/entient-keys.json"
@@ -133,14 +231,23 @@ def fetch_public_key(base_url: str = "https://api.entient.com") -> str:
 
 
 def load_receipt(path: str) -> dict:
-    """Load a receipt from a JSON file. Handles both raw receipt
-    and demo-endpoint wrapper (extracts .receipt if present)."""
+    """Load a receipt from a JSON file. Handles:
+    - Raw receipt dict
+    - Demo-endpoint wrapper (extracts .receipt)
+    - Spatial response wrapper (extracts .receipt if it's an envelope)
+    - ReceiptEnvelopeV1 directly
+    """
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
     # If this is a demo response, extract the receipt
     if "receipt" in data and "demo" in data:
         return data["receipt"]
-    # If this wraps a receipt
+    # If .receipt is a ReceiptEnvelopeV1, use it directly
+    if "receipt" in data and isinstance(data["receipt"], dict):
+        inner = data["receipt"]
+        if inner.get("envelope_version") == "1":
+            return inner
+    # If this wraps a receipt (legacy)
     if "receipt" in data and "signature" not in data:
         return data["receipt"]
     return data
@@ -175,11 +282,16 @@ def main():
         print(f"ERROR: Could not load receipt: {e}")
         sys.exit(2)
 
+    # Detect receipt format
+    envelope_mode = is_envelope_v1(receipt)
+
     # Resolve public key
     if args.fetch_key:
         public_key = fetch_public_key(args.base_url)
     elif args.public_key:
         public_key = args.public_key
+    elif envelope_mode:
+        public_key = receipt.get("signer_public_key", "")
     else:
         public_key = receipt.get("signer", "")
 
@@ -190,22 +302,51 @@ def main():
     # Run verification checks
     checks = []
 
-    # 1. Signature
-    sig_valid = verify_signature(receipt, public_key)
-    checks.append(("signature", sig_valid))
+    if envelope_mode:
+        # ReceiptEnvelopeV1 verification path
+        # 1. Structure validation
+        struct_errors = verify_envelope_structure(receipt)
+        checks.append(("envelope_structure", len(struct_errors) == 0))
 
-    # 2. Payload hash presence (format check -- full recomputation
-    #    requires server internals; signature is the authoritative proof)
-    hash_valid = verify_payload_hash_present(receipt)
-    checks.append(("payload_hash_present", hash_valid))
+        # 2. Signature (domain-prefixed)
+        sig_valid = verify_envelope_signature(receipt, public_key)
+        checks.append(("signature", sig_valid))
 
-    # 3. Canon version
-    cv_valid = verify_canon_version(receipt)
-    checks.append(("canon_version", cv_valid))
+        # 3. Payload hash (recomputable — sha256 of canonical_payload)
+        hash_valid = verify_envelope_payload_hash(receipt)
+        checks.append(("payload_hash", hash_valid))
 
-    # 4. Signer key matches
-    key_valid = verify_signer_key(receipt, public_key)
-    checks.append(("signer_key", key_valid))
+        # 4. Signer key matches
+        key_valid = receipt.get("signer_public_key", "") == public_key
+        checks.append(("signer_key", key_valid))
+
+        receipt_label = receipt.get("receipt_id", "unknown")
+        receipt_type = receipt.get("receipt_type", "unknown")
+        spatial_action = receipt.get("extensions", {}).get("entient", {}).get("spatial_action", "")
+        timestamp = receipt.get("timestamp_utc", "unknown")
+    else:
+        # Legacy compute receipt verification path
+        # 1. Signature
+        sig_valid = verify_signature(receipt, public_key)
+        checks.append(("signature", sig_valid))
+
+        # 2. Payload hash presence (format check -- full recomputation
+        #    requires server internals; signature is the authoritative proof)
+        hash_valid = verify_payload_hash_present(receipt)
+        checks.append(("payload_hash_present", hash_valid))
+
+        # 3. Canon version
+        cv_valid = verify_canon_version(receipt)
+        checks.append(("canon_version", cv_valid))
+
+        # 4. Signer key matches
+        key_valid = verify_signer_key(receipt, public_key)
+        checks.append(("signer_key", key_valid))
+
+        receipt_label = receipt.get("receipt_coord", "unknown")
+        receipt_type = receipt.get("receipt_type", "unknown")
+        spatial_action = ""
+        timestamp = receipt.get("timestamp_utc", "unknown")
 
     all_passed = all(v for _, v in checks)
 
@@ -213,24 +354,39 @@ def main():
     if args.json:
         result = {
             "valid": all_passed,
-            "receipt_coord": receipt.get("receipt_coord", ""),
+            "format": "envelope_v1" if envelope_mode else "legacy",
+            "receipt_id": receipt_label,
+            "receipt_type": receipt_type,
             "checks": {name: passed for name, passed in checks},
             "public_key": public_key[:16] + "...",
-            "canon_version": receipt.get("canon_version"),
         }
+        if envelope_mode:
+            result["spatial_action"] = spatial_action
+            result["signing_domain"] = receipt.get("signing_domain", "")
+        else:
+            result["canon_version"] = receipt.get("canon_version")
         print(json.dumps(result, indent=2))
     else:
         print()
         print("ENTIENT Receipt Verification")
         print("=" * 40)
-        print(f"  Receipt: {receipt.get('receipt_coord', 'unknown')}")
-        print(f"  Type:    {receipt.get('receipt_type', 'unknown')}")
-        print(f"  Signed:  {receipt.get('timestamp_utc', 'unknown')}")
+        fmt = "ReceiptEnvelopeV1" if envelope_mode else "Legacy (canon_v1)"
+        print(f"  Format:  {fmt}")
+        print(f"  Receipt: {receipt_label}")
+        type_display = f"{receipt_type} ({spatial_action})" if spatial_action else receipt_type
+        print(f"  Type:    {type_display}")
+        print(f"  Signed:  {timestamp}")
         print(f"  Key:     {public_key[:16]}...")
+        if envelope_mode:
+            print(f"  Domain:  {receipt.get('signing_domain', '')}")
         print()
         for name, passed in checks:
             mark = "PASS" if passed else "FAIL"
             print(f"  {mark}  {name}")
+        if envelope_mode and not all_passed:
+            struct_errors = verify_envelope_structure(receipt)
+            for err in struct_errors:
+                print(f"         -> {err}")
         print()
         if all_passed:
             print("  VERDICT: Receipt is independently verified.")

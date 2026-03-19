@@ -21,3 +21,6 @@ jobs:
 
       - name: Run conformance proof
         run: make prove
+
+      - name: Verify envelope fixtures
+        run: python test_envelope_verify.py
