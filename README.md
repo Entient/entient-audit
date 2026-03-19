@@ -4,6 +4,8 @@ Deterministic canonicalization → frozen hashing → DSSE-signed receipts → o
 
 ## Quick Start
 
+Requires Python 3.9+.
+
 ```bash
 pip install tomli   # Only needed for Python <3.11
 make prove
