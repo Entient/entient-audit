@@ -41,7 +41,7 @@ def load_fixtures():
         return json.load(f)
 
 
-def test(name, passed):
+def check(name, passed):
     mark = "PASS" if passed else "FAIL"
     print(f"  {mark}  {name}")
     return passed
@@ -71,13 +71,13 @@ def main():
 
         # 1. Detected as envelope
         total += 1
-        if test(f"{action}/is_envelope_v1", is_envelope_v1(envelope)):
+        if check(f"{action}/is_envelope_v1", is_envelope_v1(envelope)):
             passed += 1
 
         # 2. Structure valid
         total += 1
         errors = verify_envelope_structure(envelope)
-        if test(f"{action}/structure_valid ({len(errors)} errors)", len(errors) == 0):
+        if check(f"{action}/structure_valid ({len(errors)} errors)", len(errors) == 0):
             passed += 1
         else:
             for err in errors:
@@ -85,19 +85,19 @@ def main():
 
         # 3. Signature valid
         total += 1
-        if test(f"{action}/signature_valid", verify_envelope_signature(envelope, public_key)):
+        if check(f"{action}/signature_valid", verify_envelope_signature(envelope, public_key)):
             passed += 1
 
         # 4. Payload hash valid
         total += 1
-        if test(f"{action}/payload_hash_valid", verify_envelope_payload_hash(envelope)):
+        if check(f"{action}/payload_hash_valid", verify_envelope_payload_hash(envelope)):
             passed += 1
 
         # 5. Mutated payload rejected
         total += 1
         mutated = copy.deepcopy(envelope)
         mutated["canonical_payload"] = mutated["canonical_payload"][:-2] + 'X}'
-        if test(f"{action}/mutated_payload_rejected", not verify_envelope_signature(mutated, public_key)):
+        if check(f"{action}/mutated_payload_rejected", not verify_envelope_signature(mutated, public_key)):
             passed += 1
 
         # 6. Wrong domain rejected
@@ -108,7 +108,7 @@ def main():
             wrong_domain["signing_domain"] = "ENTIENT:spatial:transfer:v1"
         else:
             wrong_domain["signing_domain"] = "ENTIENT:spatial:forge:v1"
-        if test(f"{action}/wrong_domain_rejected", not verify_envelope_signature(wrong_domain, public_key)):
+        if check(f"{action}/wrong_domain_rejected", not verify_envelope_signature(wrong_domain, public_key)):
             passed += 1
 
         # 7. Wrong signature rejected
@@ -116,14 +116,14 @@ def main():
         bad_sig = copy.deepcopy(envelope)
         sig = bad_sig["signature"]
         bad_sig["signature"] = sig[:-1] + ("0" if sig[-1] != "0" else "1")
-        if test(f"{action}/wrong_signature_rejected", not verify_envelope_signature(bad_sig, public_key)):
+        if check(f"{action}/wrong_signature_rejected", not verify_envelope_signature(bad_sig, public_key)):
             passed += 1
 
         # 8. Empty canonical_payload rejected
         total += 1
         empty_cp = copy.deepcopy(envelope)
         empty_cp["canonical_payload"] = ""
-        if test(f"{action}/empty_payload_rejected", not verify_envelope_signature(empty_cp, public_key)):
+        if check(f"{action}/empty_payload_rejected", not verify_envelope_signature(empty_cp, public_key)):
             passed += 1
 
         print()
@@ -139,12 +139,12 @@ def main():
         "payload_hash": "abcd1234abcd1234abcd1234abcd1234",
     }
     total += 1
-    if test("legacy/not_detected_as_envelope", not is_envelope_v1(legacy_receipt)):
+    if check("legacy/not_detected_as_envelope", not is_envelope_v1(legacy_receipt)):
         passed += 1
 
     total += 1
     errors = verify_envelope_structure(legacy_receipt)
-    if test("legacy/fails_envelope_structure", len(errors) > 0):
+    if check("legacy/fails_envelope_structure", len(errors) > 0):
         passed += 1
     print()
 
@@ -153,19 +153,19 @@ def main():
     total += 1
     missing_version = copy.deepcopy(vectors[0]["envelope"])
     del missing_version["envelope_version"]
-    if test("malformed/missing_version_not_detected", not is_envelope_v1(missing_version)):
+    if check("malformed/missing_version_not_detected", not is_envelope_v1(missing_version)):
         passed += 1
 
     total += 1
     null_payload = copy.deepcopy(vectors[0]["envelope"])
     null_payload["canonical_payload"] = None
-    if test("malformed/null_payload_rejected", not verify_envelope_signature(null_payload, public_key)):
+    if check("malformed/null_payload_rejected", not verify_envelope_signature(null_payload, public_key)):
         passed += 1
 
     total += 1
     null_sig = copy.deepcopy(vectors[0]["envelope"])
     null_sig["signature"] = None
-    if test("malformed/null_signature_rejected", not verify_envelope_signature(null_sig, public_key)):
+    if check("malformed/null_signature_rejected", not verify_envelope_signature(null_sig, public_key)):
         passed += 1
     print()
 
