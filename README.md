@@ -1,17 +1,73 @@
-# Auditor-Grade Canonicalization Toolkit
+# ENTIENT Audit Toolkit
 
-Deterministic canonicalization → frozen hashing → DSSE-signed receipts → one-query sameness proof.
+Independent receipt verification and auditor-grade canonicalization.
+
+**Core issues receipts. This toolkit verifies them.**
+
+See [BOUNDARY.md](BOUNDARY.md) for the exact line between core and audit.
 
 ## Quick Start
 
 Requires Python 3.9+.
 
 ```bash
-pip install tomli   # Only needed for Python <3.11
+pip install pynacl tomli   # tomli only needed for Python <3.11
 make prove
 ```
 
-## What This Does
+## Independent Third-Party Verification
+
+The primary use case: verify an ENTIENT receipt without trusting ENTIENT infrastructure.
+
+```bash
+# You received a receipt file from an agent workflow.
+# You have the signer's public key (from published key registry).
+# You trust nothing else.
+
+python verify_canon_v1.py receipt.json --public-key <hex>
+```
+
+Output:
+```
+ENTIENT Independent Receipt Verification
+============================================
+  Format:  Core Trust Chain
+  Receipt: seal:a1b2c3d4e5f6...
+  Type:    certificate
+  Signed:  2026-03-20T22:30:00Z
+  Key:     a1b2c3d4e5f6...
+  Coord:   seal:a1b2c3d4...
+
+  PASS  signature
+  PASS  payload_hash_format
+  PASS  coordinate_format
+  PASS  signer_key
+
+  Evaluator claims (signed, not re-evaluated):
+    closure_integrity_state: clean
+    closure_integrity_score: 0.94
+
+  VERDICT: Receipt is independently verified.
+           No trust in ENTIENT infrastructure required.
+           The signer attested to these contents.
+```
+
+Three receipt formats are supported:
+- **Core trust chain** (`seal:` coordinates, Ed25519, domain separation)
+- **ReceiptEnvelopeV1** (spatial DSSE envelopes)
+- **Legacy** (canon_version 1, field exclusion)
+
+The verifier auto-detects the format.
+
+### What "verified" means
+
+The signature is authentic and the content is untampered. The signer attested to these exact fields at the stated time.
+
+### What "verified" does NOT mean
+
+The evaluator's judgment was correct. If a receipt claims `closure_integrity_state: clean`, this tool confirms the claim was signed -- not that it was right. Evaluator correctness is the core's domain, not audit's.
+
+## Canonicalization
 
 Turns the question "are these two records the same?" into a single hash lookup.
 
@@ -21,12 +77,14 @@ Two inputs that differ only by noise (whitespace, key order, formatting, nonces,
 
 | File | Purpose |
 |------|---------|
-| `policy_spec.toml` | What counts as noise vs substance (versioned, `implemented` flags) |
-| `conformance.jsonl` | 31 test vectors proving the canonicalizer works |
+| `verify_canon_v1.py` | **Standalone receipt verifier** -- the auditor's primary tool |
 | `canonicalizer.py` | Deterministic canonical form + frozen hash engine |
 | `keyregistry.py` | Key management: generation, rotation, revocation, public export |
 | `receipts.py` | DSSE signing (ReceiptSigner) + independent verification (ReceiptVerifier) |
-| `prove.py` | Single-command proof runner with evidence output |
+| `prove.py` | Single-command conformance proof runner with evidence output |
+| `policy_spec.toml` | What counts as noise vs substance (versioned, `implemented` flags) |
+| `conformance.jsonl` | 31 test vectors proving the canonicalizer works |
+| `BOUNDARY.md` | Exact boundary between core (issues) and audit (verifies) |
 | `Makefile` | Convenience targets |
 
 ## Trust Model
@@ -94,11 +152,14 @@ After `make prove`, the `evidence/` directory contains:
 
 ## Production Checklist
 
+- [x] Add CI job to run `make prove` on every commit (Python 3.9/3.11/3.12 matrix)
+- [x] Support core trust chain coordinate formats (`seal:`, `obligation:`)
+- [x] Document boundary between core and audit ([BOUNDARY.md](BOUNDARY.md))
+- [x] Surface evaluator claims as informational context (not execution)
 - [ ] Switch to ECDSA-P256 for third-party verifiable receipts (`registry.generate_ecdsa_key(...)`)
 - [ ] Store private registry in KMS/Vault, not on disk
 - [ ] Distribute `public_keys.json` to verifiers (ECDSA: sufficient alone; HMAC: also share secret via secure channel)
 - [ ] Add domain-specific vectors to `conformance.jsonl`
 - [ ] Customize `policy_spec.toml` synonyms for your domain
-- [ ] Add CI job to run `make prove` on every commit
 - [ ] Implement binary preprocessing per `binary_normalization` policy
 - [ ] Implement key rotation schedule per `signing.key_rotation_policy`

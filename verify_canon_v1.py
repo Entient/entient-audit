@@ -2,27 +2,36 @@
 """
 verify_canon_v1.py -- Standalone ENTIENT receipt verifier.
 
-Verifies an ENTIENT receipt independently, without trusting the server.
-Uses only the receipt JSON and the published public key.
+Independent third-party verification of ENTIENT receipts.
+No trust in ENTIENT infrastructure required -- only the receipt JSON
+and a published public key.
 
-Supports two receipt formats:
+This tool is the auditor's entry point. It answers one question:
+  "Is this receipt authentic and untampered?"
+
+It does NOT evaluate trust chain logic (closures, I/O integrity,
+evaluator decisions). That is the core's job. This tool verifies
+the cryptographic proof that the core produced.
+
+Supports three receipt formats:
   - Legacy compute receipts (canon_version 1, field exclusion)
   - ReceiptEnvelopeV1 (envelope_version "1", canonical_payload + signing_domain)
+  - Core trust chain receipts (seal:/ obligation: coordinates, Ed25519 domain separation)
 
 Requires: PyNaCl (pip install pynacl)
 
 Usage:
-    # Verify a compute receipt
+    # Verify any ENTIENT receipt
     python verify_canon_v1.py receipt.json
-
-    # Verify a spatial ReceiptEnvelopeV1
-    python verify_canon_v1.py envelope.json
 
     # Verify with an explicit public key
     python verify_canon_v1.py receipt.json --public-key <hex>
 
     # Fetch public key from ENTIENT automatically
     python verify_canon_v1.py receipt.json --fetch-key
+
+    # Output as JSON (for pipelines)
+    python verify_canon_v1.py receipt.json --json
 
 Exit codes:
     0 = all checks passed
@@ -31,11 +40,66 @@ Exit codes:
 """
 
 import json
+import re
 import sys
 import hashlib
 import argparse
 import urllib.request
 import urllib.error
+
+
+# ================================================================
+# Coordinate formats
+# ================================================================
+# ENTIENT uses content-addressed coordinates in two formats:
+#   Legacy:  sha256:<64hex>          (full hash)
+#   Core:    seal:<32hex>            (receipt coordinates)
+#            obligation:<32hex>      (obligation coordinates)
+#
+# All are deterministic hashes over canonical content.
+
+_COORD_PATTERNS = {
+    "seal": re.compile(r"^seal:[0-9a-f]{32}$"),
+    "obligation": re.compile(r"^obligation:[0-9a-f]{32}$"),
+    "sha256": re.compile(r"^sha256:[0-9a-f]{64}$"),
+}
+
+
+def parse_coordinate(coord: str) -> dict:
+    """Parse an ENTIENT coordinate string.
+
+    Returns:
+        {"format": "seal"|"obligation"|"sha256"|"unknown",
+         "hash": "<hex>", "valid": bool}
+    """
+    if not isinstance(coord, str):
+        return {"format": "unknown", "hash": "", "valid": False}
+    for fmt, pattern in _COORD_PATTERNS.items():
+        if pattern.match(coord):
+            return {"format": fmt, "hash": coord.split(":", 1)[1], "valid": True}
+    # Legacy: bare 32 or 64 hex chars (no prefix)
+    if re.match(r"^[0-9a-f]{32}$", coord) or re.match(r"^[0-9a-f]{64}$", coord):
+        return {"format": "bare_hex", "hash": coord, "valid": True}
+    return {"format": "unknown", "hash": coord, "valid": False}
+
+
+def is_valid_coordinate(coord: str) -> bool:
+    """Check if a string is a valid ENTIENT coordinate in any format."""
+    return parse_coordinate(coord)["valid"]
+
+
+# ================================================================
+# Core trust chain receipt detection
+# ================================================================
+# Core receipts use seal:<32hex> coordinates and Ed25519 with domain
+# separation (ENTIENT:<domain>:<version>). They may contain evaluator
+# claims (closure_integrity_state, io_integrity_state) as payload
+# fields. This verifier checks signatures, not evaluator logic.
+
+def is_core_receipt(data: dict) -> bool:
+    """Detect a core trust chain receipt (seal: coordinates)."""
+    rc = data.get("receipt_coord", "")
+    return isinstance(rc, str) and rc.startswith("seal:")
 
 
 # Fields excluded from canonical form before signing.
@@ -89,9 +153,12 @@ def verify_signature(receipt: dict, public_key_hex: str) -> bool:
 def verify_payload_hash_present(receipt: dict) -> bool:
     """Check that payload_hash is present and well-formed.
 
+    Accepts all ENTIENT coordinate/hash formats:
+      - Bare hex: 32 or 64 hex chars
+      - Prefixed: sha256:<64hex>, seal:<32hex>, obligation:<32hex>
+
     NOTE: payload_hash uses domain-separated hashing over internal
-    payload fields (ENTIENT:receipt:v1: prefix + canonical_json of
-    the payload dict). The exact field set is internal to the server.
+    payload fields. The exact field set is internal to the server.
     Full recomputation from outside is not possible without server
     internals. Signature verification is the authoritative proof --
     payload_hash is a derived convenience field excluded from signing.
@@ -99,14 +166,7 @@ def verify_payload_hash_present(receipt: dict) -> bool:
     h = receipt.get("payload_hash", "")
     if not h:
         return False
-    # Must be hex, either 32 chars (truncated) or 64 chars (full SHA-256)
-    if len(h) not in (32, 64):
-        return False
-    try:
-        int(h, 16)
-        return True
-    except ValueError:
-        return False
+    return is_valid_coordinate(h)
 
 
 def verify_canon_version(receipt: dict) -> bool:
@@ -200,14 +260,28 @@ def verify_envelope_structure(envelope: dict) -> list:
     if envelope.get("signature_algorithm") != "Ed25519":
         errors.append(f"signature_algorithm must be Ed25519")
 
-    valid_types = {"witness", "settlement", "refusal", "attestation"}
+    # Receipt types: spatial (witness/settlement/refusal/attestation) and
+    # core trust chain types (identity/delegation/invocation/evaluation/
+    # emission/certificate/challenge/corroboration/attestation/etc.)
+    valid_types = {
+        # Spatial
+        "witness", "settlement", "refusal", "attestation",
+        # Core trust chain (verifiable payload types, not execution logic)
+        "identity", "delegation", "acceptance", "invocation",
+        "evaluation", "emission", "certificate", "recognition",
+        "suppression", "evidence", "retrieval", "corroboration",
+        "challenge", "challenge_response", "instruction", "output",
+    }
     if envelope.get("receipt_type") not in valid_types:
-        errors.append(f"receipt_type must be one of {valid_types}")
+        errors.append(f"receipt_type must be one of {sorted(valid_types)}")
 
     ext = envelope.get("extensions", {})
     entient = ext.get("entient", {}) if isinstance(ext, dict) else {}
-    if not isinstance(entient, dict) or "spatial_action" not in entient:
-        errors.append("extensions.entient.spatial_action missing")
+    if not isinstance(entient, dict):
+        errors.append("extensions.entient must be a dict")
+    elif "spatial_action" not in entient and "receipt_type" not in entient:
+        # Spatial envelopes require spatial_action; core envelopes use receipt_type
+        errors.append("extensions.entient.spatial_action or extensions.entient.receipt_type required")
 
     return errors
 
@@ -230,11 +304,45 @@ def fetch_public_key(base_url: str = "https://api.entient.com") -> str:
     return ""
 
 
+# ================================================================
+# Evaluator claim extraction (informational, not execution)
+# ================================================================
+# Core trust chain receipts may contain evaluator-backed claims.
+# This verifier surfaces them as informational context alongside
+# the cryptographic verification result. It does NOT evaluate
+# whether the claims are correct -- that is the core's job.
+
+_EVALUATOR_CLAIM_FIELDS = {
+    "closure_integrity_state",
+    "closure_integrity_score",
+    "io_integrity_state",
+    "io_integrity_score",
+    "evaluator_coord",
+    "evaluator_role",
+}
+
+
+def _extract_evaluator_claims(data: dict) -> dict:
+    """Extract evaluator claim fields from a receipt payload.
+
+    Returns only recognized claim fields that are present.
+    These are informational -- the signature proves the issuer
+    attested to these values, but this tool does not validate
+    the evaluation logic itself.
+    """
+    claims = {}
+    for field in _EVALUATOR_CLAIM_FIELDS:
+        if field in data:
+            claims[field] = data[field]
+    return claims
+
+
 def load_receipt(path: str) -> dict:
     """Load a receipt from a JSON file. Handles:
-    - Raw receipt dict
+    - Raw receipt dict (legacy, envelope, or core)
     - Demo-endpoint wrapper (extracts .receipt)
     - Spatial response wrapper (extracts .receipt if it's an envelope)
+    - Core trust chain receipt (seal: coordinate)
     - ReceiptEnvelopeV1 directly
     """
     with open(path, "r", encoding="utf-8") as f:
@@ -242,10 +350,12 @@ def load_receipt(path: str) -> dict:
     # If this is a demo response, extract the receipt
     if "receipt" in data and "demo" in data:
         return data["receipt"]
-    # If .receipt is a ReceiptEnvelopeV1, use it directly
+    # If .receipt is a ReceiptEnvelopeV1 or core receipt, use it directly
     if "receipt" in data and isinstance(data["receipt"], dict):
         inner = data["receipt"]
         if inner.get("envelope_version") == "1":
+            return inner
+        if is_core_receipt(inner):
             return inner
     # If this wraps a receipt (legacy)
     if "receipt" in data and "signature" not in data:
@@ -255,7 +365,9 @@ def load_receipt(path: str) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Verify an ENTIENT receipt independently"
+        description="Verify an ENTIENT receipt independently. "
+        "This tool VERIFIES receipts -- it does not create, issue, or "
+        "validate execution correctness. See BOUNDARY.md."
     )
     parser.add_argument("receipt", help="Path to receipt JSON file")
     parser.add_argument(
@@ -284,6 +396,7 @@ def main():
 
     # Detect receipt format
     envelope_mode = is_envelope_v1(receipt)
+    core_mode = not envelope_mode and is_core_receipt(receipt)
 
     # Resolve public key
     if args.fetch_key:
@@ -302,6 +415,9 @@ def main():
     # Run verification checks
     checks = []
 
+    # Evaluator claims (informational -- we verify the signature, not the logic)
+    evaluator_claims = {}
+
     if envelope_mode:
         # ReceiptEnvelopeV1 verification path
         # 1. Structure validation
@@ -312,7 +428,7 @@ def main():
         sig_valid = verify_envelope_signature(receipt, public_key)
         checks.append(("signature", sig_valid))
 
-        # 3. Payload hash (recomputable — sha256 of canonical_payload)
+        # 3. Payload hash (recomputable -- sha256 of canonical_payload)
         hash_valid = verify_envelope_payload_hash(receipt)
         checks.append(("payload_hash", hash_valid))
 
@@ -320,10 +436,51 @@ def main():
         key_valid = receipt.get("signer_public_key", "") == public_key
         checks.append(("signer_key", key_valid))
 
+        # 5. Coordinate format (if present)
+        rid = receipt.get("receipt_id", "")
+        if rid:
+            checks.append(("coordinate_format", is_valid_coordinate(rid)))
+
         receipt_label = receipt.get("receipt_id", "unknown")
         receipt_type = receipt.get("receipt_type", "unknown")
         spatial_action = receipt.get("extensions", {}).get("entient", {}).get("spatial_action", "")
         timestamp = receipt.get("timestamp_utc", "unknown")
+
+        # Extract evaluator claims if present in canonical_payload
+        try:
+            payload = json.loads(receipt.get("canonical_payload", "{}"))
+            evaluator_claims = _extract_evaluator_claims(payload)
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    elif core_mode:
+        # Core trust chain receipt verification path
+        # Uses same Ed25519 + field exclusion as legacy, but with seal: coordinates
+        # 1. Signature
+        sig_valid = verify_signature(receipt, public_key)
+        checks.append(("signature", sig_valid))
+
+        # 2. Payload hash format
+        hash_valid = verify_payload_hash_present(receipt)
+        checks.append(("payload_hash_format", hash_valid))
+
+        # 3. Coordinate format (seal:<32hex>)
+        coord = receipt.get("receipt_coord", "")
+        coord_info = parse_coordinate(coord)
+        checks.append(("coordinate_format", coord_info["valid"] and coord_info["format"] == "seal"))
+
+        # 4. Signer key matches
+        key_valid = verify_signer_key(receipt, public_key)
+        checks.append(("signer_key", key_valid))
+
+        receipt_label = receipt.get("receipt_coord", "unknown")
+        receipt_type = receipt.get("receipt_type", "unknown")
+        spatial_action = ""
+        timestamp = receipt.get("timestamp_utc", "unknown")
+
+        # Extract evaluator claims from receipt payload
+        evaluator_claims = _extract_evaluator_claims(receipt)
+
     else:
         # Legacy compute receipt verification path
         # 1. Signature
@@ -350,11 +507,22 @@ def main():
 
     all_passed = all(v for _, v in checks)
 
+    # Determine format label
+    if envelope_mode:
+        fmt_label = "envelope_v1"
+        fmt_display = "ReceiptEnvelopeV1"
+    elif core_mode:
+        fmt_label = "core"
+        fmt_display = "Core Trust Chain"
+    else:
+        fmt_label = "legacy"
+        fmt_display = "Legacy (canon_v1)"
+
     # Output
     if args.json:
         result = {
             "valid": all_passed,
-            "format": "envelope_v1" if envelope_mode else "legacy",
+            "format": fmt_label,
             "receipt_id": receipt_label,
             "receipt_type": receipt_type,
             "checks": {name: passed for name, passed in checks},
@@ -363,15 +531,19 @@ def main():
         if envelope_mode:
             result["spatial_action"] = spatial_action
             result["signing_domain"] = receipt.get("signing_domain", "")
+        elif core_mode:
+            coord_info = parse_coordinate(receipt.get("receipt_coord", ""))
+            result["coordinate"] = coord_info
         else:
             result["canon_version"] = receipt.get("canon_version")
+        if evaluator_claims:
+            result["evaluator_claims"] = evaluator_claims
         print(json.dumps(result, indent=2))
     else:
         print()
-        print("ENTIENT Receipt Verification")
-        print("=" * 40)
-        fmt = "ReceiptEnvelopeV1" if envelope_mode else "Legacy (canon_v1)"
-        print(f"  Format:  {fmt}")
+        print("ENTIENT Independent Receipt Verification")
+        print("=" * 44)
+        print(f"  Format:  {fmt_display}")
         print(f"  Receipt: {receipt_label}")
         type_display = f"{receipt_type} ({spatial_action})" if spatial_action else receipt_type
         print(f"  Type:    {type_display}")
@@ -379,6 +551,9 @@ def main():
         print(f"  Key:     {public_key[:16]}...")
         if envelope_mode:
             print(f"  Domain:  {receipt.get('signing_domain', '')}")
+        if core_mode:
+            coord_info = parse_coordinate(receipt.get("receipt_coord", ""))
+            print(f"  Coord:   {coord_info['format']}:{coord_info['hash'][:16]}...")
         print()
         for name, passed in checks:
             mark = "PASS" if passed else "FAIL"
@@ -387,10 +562,16 @@ def main():
             struct_errors = verify_envelope_structure(receipt)
             for err in struct_errors:
                 print(f"         -> {err}")
+        if evaluator_claims:
+            print()
+            print("  Evaluator claims (signed, not re-evaluated):")
+            for k, v in evaluator_claims.items():
+                print(f"    {k}: {v}")
         print()
         if all_passed:
             print("  VERDICT: Receipt is independently verified.")
             print("           No trust in ENTIENT infrastructure required.")
+            print("           The signer attested to these contents.")
         else:
             failed = [n for n, v in checks if not v]
             print(f"  VERDICT: Verification FAILED ({', '.join(failed)})")
