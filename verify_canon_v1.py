@@ -496,13 +496,9 @@ def main():
     elif args.public_key:
         public_key = args.public_key
     elif dsse_mode:
-        # DSSE receipts embed the signer fingerprint in the payload, not the full key.
-        # Caller must supply --public-key or --fetch-key unless the local default exists.
-        try:
-            payload = extract_dsse_payload(receipt)
-            public_key = payload.get("signer", "")
-        except Exception:
-            public_key = ""
+        # DSSE payloads carry signer_fingerprint (short ID), not the full public key hex.
+        # There is no self-contained key in the envelope — caller must supply one explicitly.
+        public_key = ""
     elif envelope_mode:
         public_key = receipt.get("signer_public_key", "")
     else:
