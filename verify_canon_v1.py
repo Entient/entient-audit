@@ -13,7 +13,8 @@ It does NOT evaluate trust chain logic (closures, I/O integrity,
 evaluator decisions). That is the core's job. This tool verifies
 the cryptographic proof that the core produced.
 
-Supports three receipt formats:
+Supports four receipt formats:
+  - DSSE envelopes (dsse_envelope field, standard Dead Simple Signing Envelopes)
   - Legacy compute receipts (canon_version 1, field exclusion)
   - ReceiptEnvelopeV1 (envelope_version "1", canonical_payload + signing_domain)
   - Core trust chain receipts (seal:/ obligation: coordinates, Ed25519 domain separation)
@@ -39,6 +40,7 @@ Exit codes:
     2 = usage error
 """
 
+import base64
 import json
 import re
 import sys
@@ -46,6 +48,95 @@ import hashlib
 import argparse
 import urllib.request
 import urllib.error
+
+
+# ================================================================
+# DSSE — Dead Simple Signing Envelopes
+# ================================================================
+# Standard: https://github.com/secure-systems-lab/dsse/blob/master/envelope.md
+# Wire format: {"payloadType": str, "payload": base64url, "signatures": [...]}
+# PAE: "DSSEv1 " + len(payloadType) + " " + payloadType + " " + len(payload) + " " + payload
+# Signature: Ed25519 over PAE bytes. Payload: base64url(canonical_json(receipt_payload_dict))
+
+ENTIENT_RECEIPT_PAYLOAD_TYPE = "application/vnd.entient.receipt.v1+json"
+
+
+def _b64dec(s: str) -> bytes:
+    s = s.replace("-", "+").replace("_", "/")
+    pad = 4 - len(s) % 4
+    if pad != 4:
+        s += "=" * pad
+    return base64.b64decode(s)
+
+
+def _dsse_pae(payload_type: str, payload: bytes) -> bytes:
+    """DSSE Pre-Authentication Encoding."""
+    pt = payload_type.encode("utf-8")
+    return (
+        b"DSSEv1 "
+        + str(len(pt)).encode("ascii") + b" " + pt
+        + b" "
+        + str(len(payload)).encode("ascii") + b" " + payload
+    )
+
+
+def is_dsse_receipt(data: dict) -> bool:
+    """Detect a DSSE-enveloped receipt (top-level or nested under dsse_envelope)."""
+    if "dsse_envelope" in data:
+        env = data["dsse_envelope"]
+    else:
+        env = data
+    return (
+        isinstance(env, dict)
+        and "payloadType" in env
+        and "payload" in env
+        and "signatures" in env
+    )
+
+
+def _get_dsse_envelope(data: dict) -> dict:
+    """Extract the DSSE envelope dict regardless of nesting."""
+    return data.get("dsse_envelope", data)
+
+
+def verify_dsse_signature(data: dict, public_key_hex: str) -> bool:
+    """Verify Ed25519 signature in a DSSE envelope."""
+    try:
+        from nacl.signing import VerifyKey
+        from nacl.exceptions import BadSignatureError
+    except ImportError:
+        print("ERROR: PyNaCl required. Install with: pip install pynacl")
+        sys.exit(2)
+
+    envelope = _get_dsse_envelope(data)
+    try:
+        payload_bytes = _b64dec(envelope["payload"])
+        pae_bytes = _dsse_pae(envelope["payloadType"], payload_bytes)
+        pub_bytes = bytes.fromhex(public_key_hex)
+        vk = VerifyKey(pub_bytes)
+        for entry in envelope.get("signatures", []):
+            try:
+                sig_bytes = _b64dec(entry["sig"])
+                vk.verify(pae_bytes, sig_bytes)
+                return True
+            except BadSignatureError:
+                continue
+        return False
+    except Exception:
+        return False
+
+
+def extract_dsse_payload(data: dict) -> dict:
+    """Decode the JSON payload from a DSSE envelope."""
+    envelope = _get_dsse_envelope(data)
+    payload_bytes = _b64dec(envelope["payload"])
+    return json.loads(payload_bytes.decode("utf-8"))
+
+
+def dsse_keyid(data: dict) -> str:
+    envelope = _get_dsse_envelope(data)
+    sigs = envelope.get("signatures", [])
+    return sigs[0].get("keyid", "") if sigs else ""
 
 
 # ================================================================
@@ -394,15 +485,24 @@ def main():
         print(f"ERROR: Could not load receipt: {e}")
         sys.exit(2)
 
-    # Detect receipt format
-    envelope_mode = is_envelope_v1(receipt)
-    core_mode = not envelope_mode and is_core_receipt(receipt)
+    # Detect receipt format (DSSE checked first — newest standard)
+    dsse_mode = is_dsse_receipt(receipt)
+    envelope_mode = not dsse_mode and is_envelope_v1(receipt)
+    core_mode = not dsse_mode and not envelope_mode and is_core_receipt(receipt)
 
     # Resolve public key
     if args.fetch_key:
         public_key = fetch_public_key(args.base_url)
     elif args.public_key:
         public_key = args.public_key
+    elif dsse_mode:
+        # DSSE receipts embed the signer fingerprint in the payload, not the full key.
+        # Caller must supply --public-key or --fetch-key unless the local default exists.
+        try:
+            payload = extract_dsse_payload(receipt)
+            public_key = payload.get("signer", "")
+        except Exception:
+            public_key = ""
     elif envelope_mode:
         public_key = receipt.get("signer_public_key", "")
     else:
@@ -418,7 +518,31 @@ def main():
     # Evaluator claims (informational -- we verify the signature, not the logic)
     evaluator_claims = {}
 
-    if envelope_mode:
+    if dsse_mode:
+        # DSSE envelope verification path
+        # 1. Signature (Ed25519 over PAE bytes — standard DSSE)
+        sig_valid = verify_dsse_signature(receipt, public_key)
+        checks.append(("dsse_signature", sig_valid))
+
+        # 2. payloadType must match ENTIENT receipt type
+        envelope = _get_dsse_envelope(receipt)
+        pt_valid = envelope.get("payloadType") == ENTIENT_RECEIPT_PAYLOAD_TYPE
+        checks.append(("payload_type", pt_valid))
+
+        # Decode payload for display / evaluator claims
+        try:
+            payload = extract_dsse_payload(receipt)
+        except Exception:
+            payload = {}
+
+        keyid = dsse_keyid(receipt)
+        receipt_label = payload.get("receipt_coord", keyid or "unknown")
+        receipt_type = payload.get("receipt_type", "unknown")
+        spatial_action = ""
+        timestamp = payload.get("issued_at", payload.get("timestamp_utc", "unknown"))
+        evaluator_claims = _extract_evaluator_claims(payload)
+
+    elif envelope_mode:
         # ReceiptEnvelopeV1 verification path
         # 1. Structure validation
         struct_errors = verify_envelope_structure(receipt)
@@ -508,7 +632,10 @@ def main():
     all_passed = all(v for _, v in checks)
 
     # Determine format label
-    if envelope_mode:
+    if dsse_mode:
+        fmt_label = "dsse"
+        fmt_display = "DSSE (Dead Simple Signing Envelope)"
+    elif envelope_mode:
         fmt_label = "envelope_v1"
         fmt_display = "ReceiptEnvelopeV1"
     elif core_mode:
@@ -528,7 +655,10 @@ def main():
             "checks": {name: passed for name, passed in checks},
             "public_key": public_key[:16] + "...",
         }
-        if envelope_mode:
+        if dsse_mode:
+            result["keyid"] = dsse_keyid(receipt)
+            result["payload_type"] = _get_dsse_envelope(receipt).get("payloadType", "")
+        elif envelope_mode:
             result["spatial_action"] = spatial_action
             result["signing_domain"] = receipt.get("signing_domain", "")
         elif core_mode:
@@ -549,6 +679,9 @@ def main():
         print(f"  Type:    {type_display}")
         print(f"  Signed:  {timestamp}")
         print(f"  Key:     {public_key[:16]}...")
+        if dsse_mode:
+            print(f"  KeyID:   {dsse_keyid(receipt)}")
+            print(f"  PType:   {_get_dsse_envelope(receipt).get('payloadType', '')}")
         if envelope_mode:
             print(f"  Domain:  {receipt.get('signing_domain', '')}")
         if core_mode:
